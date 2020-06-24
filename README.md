@@ -1,10 +1,5 @@
----
-title: "NSF EAGER"
-author: "Sara Williams"
-date: "6/24/2020"
-output: html_document
----
-# Immunity to Community: Can Quantifying Immune Traits Inform Reef Community Structure?
+
+# NSF EAGER: Immunity to Community: Can Quantifying Immune Traits Inform Reef Community Structure?
 
 Principle Investigators: Laura Mydlarz, Erinn Muller, Marilyn Brandt.
 
