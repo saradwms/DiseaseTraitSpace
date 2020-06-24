@@ -1,0 +1,211 @@
+---
+title: "Clustering and Random Forests of Disease Traits"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+# 2019-2020 NSF EAGER Annual Report
+
+## Code for the hierarchical clustering approach used to determine susceptibility group identity and Random Forest Analysis to determine most influential traits in cluster identification.
+
+### Methods:
+
+We used a Gower dissimilarity matrix that allows for mixed variables and variable weights when determining similarity of samples based on traits. The dissimilarity matrix is then used in the clustering step. Clustering was done using the function hclust() with Ward’s minimum variance method of hierarchical clustering. In the resultant dendrogram, the height of the fusion provided on the vertical axis indicates the (dis)similarity between two observations. The higher the height of the fusion, the less similar the observations. We identify clusters by cutting the tree, so the height of the cut is indicative of similarity within the cluster. There is no universal method for determining the best number of clusters from a dendrogram. 
+
+We used random forest analyses to determine what traits most influence the cluster structure. Random forest analysis is a machine based learning method that estimates variable importance by combining many classification trees through bootstrap sampling and model averaging. We ran 2000 iterations of a random forest analysis that computed the increase in cluster mis-classification rate for each trait when it was excluded and all other traits held constant. Traits that resulted in high mis-class rates were determined to be the most important traits. 
+
+### Code:
+
+#### Packages and data load-in
+```{r load packages, results='hide',message=FALSE, warning=FALSE}
+library(FD)         # gower dissimiliarity matrix and some other 
+#clustering stuff
+library(ggplot2)    # plotting
+library(vegan)      # stats
+library(igraph)     # networks
+library(tidyverse)  # data manipulation
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering visualization
+library(dendextend) # for making dendograms fancy
+library(clValid)    # has the dunns index function for comparing 
+#cluster numbers
+library(mclust)     # normal mixture modeling for model based clustering,
+#classification, and density estimation
+library(randomForest) # Random Forests functions
+
+```
+
+```{r}
+#Set your directory and load the data
+setwd("~/Dropbox/disease_trait_models/DiseaseTraitSpace_WP")
+#Load data
+trait.data<-read.csv("Clustering_and_RF/traits_loggenes_env.csv",row.names=1) 
+#this trait file contains all genes that are indicated to be 
+#environmentally sensitive and their values are log-normalized.
+
+```
+
+#### Custom functions to wrap up data analysis and visualization
+
+Function to color each sample name by the species of the sample
+```{r}
+sp_bars_labels<-function(data){
+  #Create a vector giving a color for each sample to which 
+  #species it belongs to
+  spnames <- rep("Other", length(rownames(data)))
+  is_x <- grepl("Mcav", rownames(data))
+  spnames[is_x] <- "Mcav"
+  is_x <- grepl("Past", rownames(data))
+  spnames[is_x] <- "Past"
+  is_x <- grepl("Ppor", rownames(data))
+  spnames[is_x] <- "Ppor"
+  is_x <- grepl("Oann", rownames(data))
+  spnames[is_x] <- "Oann"
+  is_x <- grepl("Ssid", rownames(data))
+  spnames[is_x] <- "Ssid"
+  is_x <- grepl("Cnat", rownames(data))
+  spnames[is_x] <- "Cnat"
+  is_x <- grepl("Ofav", rownames(data))
+  spnames[is_x] <- "Ofav"
+  spnames<-as.factor(spnames)
+  n_sp <- length(unique(spnames))
+  cols_sp <- colorspace::rainbow_hcl(n_sp, c = 70, l  = 50)
+  col_sample_sp <- cols_sp[spnames]
+  return(col_sample_sp)
+}
+```
+
+#### Function to color a bar with the infected status of a sample (control, uninfected,infected)
+```{r}
+infstatus_bars_labels<-function(data){
+  
+  ### Infected status, control exposed infected
+  status<-as.factor(data$Infected_Status)
+  cols_status<-c("grey","black","red")
+  col_sample_Infstatus<-cols_status[status]
+  return(col_sample_Infstatus)
+}
+```
+
+Function to color a bar by the number of days it took for a sample to become infected (0 indicates that a sample was never infected)
+```{r}
+daystoinf_bars_labels<-function(data){
+  
+  ### days to infection
+  fact_daystoinf<-as.factor(data$days_to_infection)
+  n_daystoinf<-length(levels(fact_daystoinf))
+  if(n_daystoinf==1){
+    cols_daytoinf<-"black"
+  }else{
+    cols_daytoinf <- colorspace::diverging_hcl(n_daystoinf)
+  }
+  col_sample_daystoinf <- cols_daytoinf[fact_daystoinf]
+  return(col_sample_daystoinf)
+}
+```
+
+Function to run clustering on dataset and then make dendrogram figure
+```{r}
+traits_clust<- function(data,numclustviz,colstoignore,name){
+  col_sample_sp<-sp_bars_labels(data)
+  fact_daystoinf<-as.factor(data$days_to_infection)
+  n_daystoinf<-length(levels(fact_daystoinf))
+  if(n_daystoinf==1){
+    cols_daytoinf<-"black"
+  }else{
+    cols_daytoinf <- colorspace::diverging_hcl(n_daystoinf)
+  }
+  
+  col_sample_daystoinf <- cols_daytoinf[fact_daystoinf]
+  col_sample_Infstatus<-infstatus_bars_labels(data)
+  
+  data<-data[,-colstoignore]
+  #make dissimiliarity matrix and run hclust
+  data_gdis<-gowdis(data)
+  hc_gowdis <- hclust(data_gdis, method = "ward.D2" )
+  dend <- as.dendrogram(hc_gowdis)
+  
+  #customize denddrogram
+  col_dend <- color_branches(dend, k = numclustviz)
+  
+  labels_colors(col_dend)<-col_sample_sp[order.dendrogram(col_dend)]
+  
+  #Make dendrogram figure
+  par(mar = c(12,4,1,1))
+  plot(col_dend)
+  colored_bars(cbind(col_sample_daystoinf,col_sample_Infstatus), 
+               col_dend, rowLabels = c("Days to Inf","Disease"))
+  title(name)
+  legend("topright",inset = c(0,-0.03), legend = levels(fact_daystoinf), 
+         fill = cols_daytoinf,title="Days to inf",ncol=2,xpd=NA)
+  return(hc_gowdis)
+}
+```
+
+Function to run random forest analysis on data
+```{r}
+traits_RF<-function(data,clusternumber,colstoignore,name){
+  data<-data[,-colstoignore]
+  #cut to just keep one cluster column in the dataset
+  data_gdis<-gowdis(data)
+  hc_gowdis <- hclust(data_gdis, method = "ward.D2" )
+  Nthcol<-ncol(data)
+  groups<-cutree(hc_gowdis,clusternumber)
+  data[,Nthcol+1]<-as.factor(groups)
+  cluster_name<-paste("cluster",clusternumber, sep="")
+  colnames(data)[Nthcol+1]<-cluster_name
+  cluster<-data[,Nthcol+1]
+  #print(class(cluster))
+  
+  #impute to get rid of NAs
+  if (any(is.na(data))==TRUE){
+    mydataImpute <- rfImpute(y=cluster, x=data[,1:Nthcol])
+  }else{
+    mydataImpute<-data[,-ncol(data)]
+  }
+  
+  data_rF <- randomForest(cluster ~ ., mydataImpute, ntree=20000)
+  print(data_rF)
+  varImpPlot(data_rF)
+  title(name)
+  return(importance(data_rF,type=2))
+}
+```
+
+#### Implement Clustering Analysis and Visualization
+```{r}
+#head(trait.data)
+data_nocontrols<-trait.data%>%
+  rownames_to_column('name') %>%
+  filter(Infected_Status!="Control")%>%
+  filter(ID!=72)%>% #Cnat 72 consistently clusters by itself so it is removed here
+  column_to_rownames('name')
+data_nocontrols<-na.omit(data_nocontrols) #removes samples with no gene expression data
+
+colstoignore<-c(1:10,17)# all traits that are just the morphology,
+#species name, disease related, and Red 660, and now genes
+
+traits_clust(data_nocontrols,2,colstoignore,"2 clusters")
+traits_clust(data_nocontrols,3,colstoignore, "3 clusters")
+traits_clust(data_nocontrols,4,colstoignore, "4 clusters")
+```
+
+#### Implement Random Forests
+```{r}
+#will determine important traits for determining identity within the 4 clusters above
+rf_alldata_4c<-traits_RF(data_nocontrols,4,colstoignore,"4 Clusters")
+
+```
+
+#### Output the RF trait rankings
+```{r}
+rfoutput_to_ordereddf<-function(rf){
+  RF.df<-as.data.frame(rf)
+  RF.df$names<-rownames(rf)
+  rf.df.ordered<-RF.df[order(RF.df$MeanDecreaseGini,decreasing=TRUE),]
+  return(rf.df.ordered)
+}
+rfoutput_to_ordereddf(rf_alldata_4c)
+```
+
